@@ -1,0 +1,788 @@
+---
+title: "Project One Data Set"
+author: "patrick lynch"
+date: "2025-08-05"
+output: html_document
+---
+
+
+### Data exploration od the Project1 dataset
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{R}
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(scales)
+library(car)
+library(boot)
+library(purrr)
+library(stringr)
+library(forcats)
+library(tidyr)
+```
+
+
+
+
+```{R}
+df <- read.csv("C:/Users/p_lyn/Project 1/project_1_data.csv", stringsAsFactors = FALSE)
+
+head(df)
+```
+
+
+
+```{R}
+word_counts <- df %>%
+  select(job_title) %>%
+  mutate(job_title = str_to_lower(job_title)) %>%            
+  mutate(job_title = str_replace_all(job_title, "[^a-z\\s]", "")) %>% 
+  filter(job_title != "") %>%                                
+  count(job_title, sort = TRUE)                              
+
+word_counts
+```
+
+# Top four roles seem to be the heart of the dataset
+
+
+```{R}
+word_counts <- df %>%
+  count(job_title) %>%
+  arrange(desc(n))
+
+word_counts_grouped <- word_counts %>%
+  mutate(job_title_grouped = ifelse(n < 40, "Other", job_title)) %>%
+  group_by(job_title_grouped) %>%
+  summarise(count = sum(n), .groups = "drop") %>%
+  arrange(desc(count)) %>%
+  mutate(
+    percent = count / sum(count) * 100,
+    label = paste0(job_title_grouped, "\n", count, " (", round(percent, 1), "%)")
+  )
+
+ggplot(word_counts_grouped, aes(x = "", y = count, fill = job_title_grouped)) +
+  geom_col(color = "white") +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3) +
+  scale_fill_brewer(palette = "Paired") +  # complementary color palette
+  theme_void() +
+  labs(fill = "Job Title Groups", title = "Job Title Distribution Pie Chart")
+
+```
+
+# Scrape names dpwn to just 4
+
+```{R}
+library(dplyr)
+
+employment_counts <- df %>%
+  count(employment_type, sort = TRUE)
+
+employment_counts
+
+employment_by_remote <- df %>%
+  count(employment_type, remote_ratio, sort = TRUE)
+
+employment_by_remote
+```
+
+
+# Full time is also the majority, also remote
+
+
+```{R}
+ft_remote100_exp_counts <- df %>%
+  filter(employment_type == "FT", remote_ratio == 100) %>%
+  count(experience_level, sort = TRUE)
+
+ft_remote100_exp_counts
+```
+
+
+# Majority Senior and Mid level
+
+```{R}
+ft_remote0_exp_counts <- df %>%
+  filter(employment_type == "FT", remote_ratio == 0) %>%
+  count(experience_level, sort = TRUE)
+
+ft_remote0_exp_counts
+```
+
+# Full time non-remote also majority for Senior and Mid levels
+
+```{R}
+ft_remote50_exp_counts <- df %>%
+  filter(employment_type == "FT", remote_ratio == 50) %>%
+  count(experience_level, sort = TRUE)
+
+ft_remote50_exp_counts
+```
+
+# Hybrid also dominated by Mid and Senior
+
+
+```{R}
+selected_roles <- c(
+  "data scientist",
+  "data engineer",
+  "data analyst",
+  "machine learning engineer"
+)
+
+df_selected <- df %>%
+  filter(str_to_lower(job_title) %in% selected_roles)
+
+role_counts <- df_selected %>%
+  count(job_title, sort = TRUE)
+
+```
+
+
+
+# ANOVA test
+
+```{R}
+anova_result <- aov(salary_in_usd ~ job_title, data = df_selected)
+summary(anova_result)
+```
+
+# Turkey interpret
+
+
+```{R}
+TukeyHSD(anova_result)
+```
+
+
+
+# Data Engineer – Data Analyst	19,831	145 → 39,519	0.0476 p.value < 0.05
+
+
+
+
+```{R}
+remote_table <- table(
+  df_selected$job_title,
+  df_selected$remote_ratio == 100
+)
+
+fisher_result <- fisher.test(remote_table)
+
+remote_table
+fisher_result
+```
+
+
+```{R}
+summary_df <- df_selected %>%
+  group_by(experience_level) %>%
+  summarise(avg_salary = mean(salary_in_usd, na.rm = TRUE))
+```
+
+
+```{R}
+ggplot(summary_df, aes(x = experience_level, y = avg_salary, fill = experience_level)) +
+  geom_col() +
+  labs(title = "Average Salary by Experience Level All Company Size",
+       x = "Experience Level", y = "Average Salary (USD)") +
+  theme_minimal()
+
+df_selected %>%
+  group_by(job_title) %>%
+  summarise(avg_salary = mean(salary_in_usd, na.rm = TRUE)) %>%
+  ggplot(aes(x = job_title, y = avg_salary, fill = job_title)) +
+  geom_col() +
+  labs(title = "Average Salary by Job Title (All Company Size)", x = "Job Title", y = "Average Salary (USD)") +
+  theme_minimal()
+
+remote_table_df <- as.data.frame(remote_table)
+colnames(remote_table_df) <- c("JobTitle", "RemoteStatus", "Count")
+
+ggplot(remote_table_df, aes(x = JobTitle, y = Count, fill = RemoteStatus)) +
+  geom_col(position = "dodge") +
+  labs(title = "Remote Work by Job Title (Small and Mid)",
+       x = "Job Title", y = "Count") +
+  theme_minimal()
+```
+
+
+
+
+
+
+# There is a statistically significant relationship between role type and whether the job is fully remote
+
+
+```{R}
+library(ggplot2)
+
+df_selected %>%
+  mutate(full_remote = ifelse(remote_ratio == 100, "Yes", "No")) %>%
+  count(job_title, full_remote) %>%
+  group_by(job_title) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = job_title, y = prop, fill = full_remote)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Proportion of Fully Remote Roles by Job Title",
+       x = "Job Title", y = "Percentage", fill = "Fully Remote")
+```
+
+
+# Data scientist and Machine Learning Engineers seem to be about +-20% less remote
+
+
+```{R}
+stats_table <- df_selected %>%
+  mutate(full_remote = ifelse(remote_ratio == 100, "Yes", "No")) %>%
+  group_by(job_title) %>%
+  summarise(
+    mean_salary = mean(salary_in_usd, na.rm = TRUE),
+    sd_salary   = sd(salary_in_usd, na.rm = TRUE),
+    count       = n(),
+    pct_full_remote = mean(full_remote == "Yes") * 100
+  ) %>%
+  arrange(desc(mean_salary))
+
+stats_table
+```
+
+# Data Engineers have the highest mean salary.
+
+# Data Scientists lead in remote work population.
+
+
+```{R}
+library(dplyr)
+
+engineer_salaries <- df_selected %>%
+  filter(job_title == "Data Engineer") %>%
+  pull(salary_in_usd)
+
+analyst_salaries <- df_selected %>%
+  filter(job_title == "Data Analyst") %>%
+  pull(salary_in_usd)
+
+t_test_result <- t.test(engineer_salaries, analyst_salaries)
+
+t_test_result
+```
+
+# Data Engineers earn more on average than Data Analysts, with the true difference likely in that $7k–$32k range
+
+
+
+```{R}
+mean_eng <- mean(engineer_salaries)
+mean_analyst <- mean(analyst_salaries)
+
+sd_eng <- sd(engineer_salaries)
+sd_analyst <- sd(analyst_salaries)
+
+n_eng <- length(engineer_salaries)
+n_analyst <- length(analyst_salaries)
+
+se_diff <- sqrt((sd_eng^2 / n_eng) + (sd_analyst^2 / n_analyst))
+
+z_stat <- (mean_eng - mean_analyst) / se_diff
+
+p_value_z <- 2 * (1 - pnorm(abs(z_stat)))
+
+z_stat
+p_value_z
+```
+
+
+# Same conclusion as the t-test: z = 3.074, p ≈ 0.00211 
+
+```{R}
+kruskal_result <- kruskal.test(salary_in_usd ~ job_title, data = df_selected)
+
+kruskal_result
+```
+
+# Reinforcing Tukey’s post-hoc from ANOVA, where only the Engineer vs Analyst pair was significant
+
+```{R}
+selected_roles <- c("data scientist", "data engineer", "data analyst", "machine learning engineer")
+
+df_integrated <- df %>%
+  mutate(
+    job_title = str_to_lower(job_title),
+    experience_level = as.character(experience_level),
+    company_size = as.character(company_size),
+    full_remote = ifelse(remote_ratio == 100, "Yes", "No")
+  ) %>%
+  filter(job_title %in% selected_roles)
+
+df_integrated <- df_integrated %>%
+  mutate(experience_level = fct_relevel(experience_level, 
+                                        c("EN","MI","SE","EX")))
+
+table_counts <- df_integrated %>%
+  count(job_title, experience_level, company_size) %>%
+  arrange(desc(n))
+
+table_counts
+```
+
+
+# Build data frame; job_title, exprience_level, company_size
+
+```{R}
+summary_table <- df_integrated %>%
+  group_by(job_title, experience_level, company_size) %>%
+  summarise(
+    count = n(),
+    mean_salary = mean(salary_in_usd, na.rm = TRUE),
+    sd_salary = sd(salary_in_usd, na.rm = TRUE),
+    median_salary = median(salary_in_usd, na.rm = TRUE),
+    pct_full_remote = mean(full_remote == "Yes", na.rm = TRUE) * 100,
+    .groups = "drop"
+  ) %>%
+  arrange(job_title, experience_level, desc(mean_salary))
+
+summary_table
+```
+
+
+
+# Expert, Data engineer at mid compaies paid most, thows off set, violin plots will show this
+
+```{R}
+df_viz <- df_integrated %>%
+  mutate(company_size = fct_lump(company_size, n = 4, other_level = "Other")) %>%
+  droplevels()
+
+median_labels <- df_viz %>%
+  group_by(company_size, job_title) %>%
+  summarise(median_salary = median(salary_in_usd, na.rm = TRUE), .groups = "drop") %>%
+  mutate(label = dollar(median_salary))
+
+p1 <- ggplot(df_viz, aes(x = company_size, y = salary_in_usd, fill = job_title)) +
+  geom_violin(position = position_dodge(width = 0.9), trim = FALSE, alpha = 0.8) +
+  geom_boxplot(width = 0.09, position = position_dodge(width = 0.9), outlier.shape = NA, alpha = 0.9) +
+  geom_point(data = median_labels, aes(x = company_size, y = median_salary, group = job_title),
+             position = position_dodge(width = 0.9), color = "black", size = 1.5) +
+  geom_text(data = median_labels, aes(x = company_size, y = median_salary, label = label, group = job_title),
+            position = position_dodge(width = 0.9), vjust = -1, angle = 75, size = 3.5) +
+  scale_y_continuous(labels = dollar_format(prefix = "$", big.mark = ",")) +
+  labs(title = "Salary distribution by Company Size — with medians",
+       x = "Company Size", y = "Salary (USD)", fill = "Job Title") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(p1)
+
+```
+
+
+# salary spread by most frequent titles and company size
+# Not seeing data engineer thowing it off
+# Data Analyst vs Data Engineer gap is showing, smallest at small company
+
+```{R}
+roles_pattern <- regex("data scientist|data engineer|data analyst|machine learning engineer",
+                       ignore_case = TRUE)
+
+ft_pattern <- regex("(^|\\W)(FT|FTE|FULL[- ]?TIME|FULLTIME)(\\W|$)", ignore_case = TRUE)
+
+df_four_clean <- df %>%
+
+  mutate(
+    job_title_raw = if_else(is.na(job_title), "", as.character(job_title)),
+    job_title_l = str_to_lower(job_title_raw),
+    employment_raw = if_else(is.na(employment_type), "", as.character(employment_type)),
+    employment_u = str_to_upper(employment_raw),
+    experience_level = as.character(experience_level),
+    company_size = as.character(company_size)
+  ) %>%
+
+  filter(!is.na(salary_in_usd),
+         salary_in_usd != "",
+         !is.na(company_size),
+         company_size != "",
+         !is.na(experience_level),
+         experience_level %in% c("EN","MI","SE")) %>%
+
+  filter(str_detect(employment_u, ft_pattern),
+         str_detect(job_title_l, roles_pattern)) %>%
+
+  mutate(
+    job_title = case_when(
+      str_detect(job_title_l, regex("data scientist", ignore_case = TRUE)) ~ "Data Scientist",
+      str_detect(job_title_l, regex("data engineer", ignore_case = TRUE)) ~ "Data Engineer",
+      str_detect(job_title_l, regex("data analyst", ignore_case = TRUE)) ~ "Data Analyst",
+      str_detect(job_title_l, regex("machine learning engineer", ignore_case = TRUE)) ~ "Machine Learning Engineer",
+      TRUE ~ "Other"
+    ),
+    # lump company_size to top 4 levels (others -> Other)
+    company_size = fct_lump(as.factor(company_size), n = 4, other_level = "Other"),
+    experience_level = factor(experience_level, levels = c("EN","MI","SE"))
+  ) %>%
+  droplevels()
+
+### what is there
+
+cat("TOTAL ROWS KEPT:", nrow(df_four_clean), "\n\n")
+cat("Counts by job_title x experience_level:\n")
+print(table(df_four_clean$job_title, df_four_clean$experience_level))
+cat("\nCounts by company_size:\n")
+print(table(df_four_clean$company_size))
+cat("\nExample head of cleaned data:\n")
+print(head(df_four_clean[, c("job_title","experience_level","company_size","salary_in_usd","employment_type","job_title_raw")]))
+
+
+median_labels <- df_four_clean %>%
+  group_by(company_size, experience_level) %>%
+  summarise(
+    median_salary = median(salary_in_usd, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(label = paste0(dollar(median_salary), "\n(n=", n, ")"))
+
+p <- ggplot(df_four_clean, aes(x = company_size, y = salary_in_usd, fill = experience_level)) +
+  geom_violin(position = position_dodge(width = 0.9), trim = FALSE, alpha = 0.9) +
+  geom_boxplot(width = 0.08, position = position_dodge(width = 0.9), outlier.shape = NA, alpha = 0.9) +
+  geom_point(data = median_labels,
+             aes(x = company_size, y = median_salary, group = experience_level),
+             position = position_dodge(width = 0.9), color = "black", size = 2.5) +
+  geom_text(data = median_labels,
+            aes(x = company_size, y = median_salary, label = label, group = experience_level),
+            position = position_dodge(width = 0.9), vjust = -0.6, size = 3.5) +
+  scale_y_continuous(labels = dollar_format(prefix = "$", big.mark = ",")) +
+  labs(title = "Salary distribution (FT only) — Four Roles, EN/MI/SE only",
+       subtitle = "Grouped by Company Size; fill = Experience Level (median + n shown)",
+       x = "Company Size", y = "Salary (USD)", fill = "Experience Level") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(p)
+```
+
+
+
+# U shaped small business plot for experience
+``
+
+```{R}
+df_small <- df %>%
+  filter(company_size == "S", 
+         employment_type == "FT", 
+         !is.na(salary_in_usd))
+
+pie_data <- df_small %>%
+  group_by(experience_level) %>%
+  summarise(n = n(), 
+            mean_salary = mean(salary_in_usd, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(prop = n / sum(n))
+
+pie_chart <- ggplot(pie_data, aes(x = "", y = prop, fill = experience_level)) +
+  geom_col(width = 1, color = "white") +  # Create the pie slices
+  coord_polar(theta = "y") +              # Transform into a pie chart
+  geom_text(aes(label = paste0(percent(prop), "\n$", 
+                               formatC(mean_salary, format = "f", big.mark = ",", digits = 0))), 
+            position = position_stack(vjust = 0.5), size = 3) +  
+  scale_fill_discrete(name = "Experience Level") +  
+  theme_void() +  
+  theme(
+    aspect.ratio = 1,           
+    legend.position = "bottom",  
+    legend.text = element_text(size = 9),  
+    plot.title = element_text(hjust = 0.5, size = 12) 
+  ) +
+  labs(title = "Mean Salary by Experience Level for Small Companies (FT)")
+
+ggsave("small_company_pie_chart.png", pie_chart, width = 8, height = 6, dpi = 300)
+
+print(pie_chart)
+```
+
+
+
+# Small business pay percentage pie
+
+
+
+
+
+```{R}
+df_filtered <- df %>%
+  filter(
+    company_size == "S",
+    employment_type == "FT",
+    !is.na(salary_in_usd),
+    !is.na(remote_ratio)
+  ) %>%
+  mutate(
+    remote_status = ifelse(remote_ratio == 100, "Remote", "Non-Remote")
+  )
+
+df_small <- df %>%
+  filter(company_size == "S",
+         employment_type == "FT",
+         !is.na(salary_in_usd),
+         !is.na(remote_ratio)) %>%
+  mutate(remote_status = ifelse(remote_ratio == 100, "Remote", "Non-Remote"))
+
+ggplot(df_small, aes(x = remote_status, y = salary_in_usd, fill = remote_status)) +
+  geom_violin(trim = FALSE, alpha = 0.8) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA, alpha = 0.6) +
+  stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "red") +
+  stat_summary(fun = median, geom = "text", aes(label = paste0("$", round(..y.., 0))),
+               vjust = -0.5, color = "black", size = 5) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(
+    title = "Salary Distribution — Small Companies (Remote vs Non-Remote)",
+    x = "Work Arrangement",
+    y = "Salary (USD)",
+    fill = "Remote Status"
+  ) +
+  theme_minimal()
+```
+
+
+# Remote vs non for small business shows a higher pay average for remote
+
+```{R}
+df <- read.csv("C:/Users/p_lyn/Project 1/project_1_data.csv", stringsAsFactors = FALSE)
+```
+
+
+```{R}
+summary_stats <- df_filtered %>%
+  group_by(experience_level) %>%
+  summarise(count = n(),
+            avg_salary = mean(salary_in_usd, na.rm = TRUE),
+            median_salary = median(salary_in_usd, na.rm = TRUE)) 
+
+print(summary_stats)
+
+```
+
+```{R}
+ggplot(df_filtered, aes(x = experience_level, y = salary_in_usd, fill = company_size)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Salary Distribution by Experience Level Company Size",
+       x = "Experience Level",
+       y = "Salary (USD)")
+
+anova_result <- aov(salary_in_usd ~ experience_level, data = df_filtered)
+summary(anova_result)
+
+```
+
+
+
+```{R}
+# Create the summary data frame for stats on experience level 
+summary_df <- data.frame(
+  experience_level = c("EN", "MI", "SE", "EX"),
+  count = c(88, 213, 280, 26),
+  avg_salary = c(61643.32, 87996.06, 138617.29, 199392.04)
+)
+
+salary_data <- data.frame(
+  experience_level = rep(summary_df$experience_level, summary_df$count),
+  salary = unlist(mapply(function(avg, n) rep(avg, n),
+                         summary_df$avg_salary, summary_df$count))
+)
+
+anova_result <- aov(salary ~ experience_level, data = salary_data)
+summary(anova_result)
+
+chisq_result <- chisq.test(summary_df$count)
+chisq_result
+
+anova_result
+chisq_result
+```
+
+
+# This is just above the 0.05 significance threshold, so we cannot reject the null hypothesis at the traditional level.
+# However, p ≈ 0.068 is close to significance, meaning there’s a possible trend toward salary differences by job title, but the evidence is not strong enough to confirm it.
+
+# Fisher’s Exact Test (Remote vs Job Title Counts)
+# p ≈ 0.008 indicates a significant association between job title and remote work status.
+
+# This means remote work is not evenly distributed across job titles Experience Level (EN, MI, SE, EX)
+
+# Strong effect on salary (ANOVA p < 2e-16).
+
+# Strongly unbalanced employee counts (Chi² p < 2.2e-16).
+
+# Job Title (Data Analyst, Data Engineer, Data Scientist, Machine Learning Engineer) # Weak overall effect on salary (p ≈ 0.068), but Data Engineers earn more than Data Analysts (p ≈ 0.048).
+
+# Remote work distribution varies significantly by job title (Fisher’s Exact p ≈ 0.008)
+
+######### So, experience level is the most powerful predictor of salary. Job title plays a smaller role, but remote work opportunities are significantly tied to role type
+
+```{R}
+# salary distribution for small and mid violin plot by experience
+df_four_clean <- df %>%
+  filter(company_size %in% c("S", "M"),
+         !is.na(salary_in_usd))
+
+salary_stats <- df_four_clean |>
+  group_by(experience_level) |>
+  summarise(
+    mean_salary = mean(salary_in_usd, na.rm = TRUE),
+    sd_salary = sd(salary_in_usd, na.rm = TRUE),
+    count = n(),
+    .groups = "drop"
+  ) |>
+  mutate(
+    sd_percent = (sd_salary / mean_salary) * 100,
+    label_text = paste0("Mean: $", round(mean_salary, 0),
+                        "\nSD: ", round(sd_percent, 1), "%",
+                        "\nN: ", count)
+  )
+
+ggplot(df_four_clean, aes(x = experience_level, y = salary_in_usd, fill = experience_level)) +
+  geom_violin(trim = FALSE, alpha = 0.6) +
+  geom_point(
+    data = salary_stats,
+    mapping = aes(x = experience_level, y = mean_salary),
+    inherit.aes = FALSE,
+    color = "red",
+    size = 3
+  ) +
+  geom_errorbar(
+    data = salary_stats,
+    mapping = aes(x = experience_level,
+                  ymin = mean_salary - sd_salary,
+                  ymax = mean_salary + sd_salary),
+    inherit.aes = FALSE,
+    width = 0.15,
+    color = "red"
+  ) +
+  geom_text(
+    data = salary_stats,
+    mapping = aes(x = experience_level,
+                  y = mean_salary + sd_salary + 2000,  # padding
+                  label = label_text),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 3,
+    hjust = 1.1
+  ) +
+scale_y_continuous(
+  breaks = seq(50000, 500000, by = 50000),  # from 50k to 200k in steps of 50k
+  labels = scales::dollar_format(scale = 1e-0, prefix = "$") # format as dollars
+)+
+  labs(
+    title = "Salary Distribution by Experience Level (Small & Medium Companies)",
+    x = "Experience Level",
+    y = "Salary (USD)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+
+# small and mid size pay averages with sd by experience level
+# counts of small and mid by experience
+``
+
+```{R}
+library(ggplot2)
+# Counts and salary by experience for small and mid size companies
+ggplot(summary_df, aes(x = experience_level, y = avg_salary, fill = experience_level)) +
+  geom_col() +
+  labs(title = "Average Salary by Experience Level (S & M Companies)",
+       x = "Experience Level",
+       y = "Average Salary (USD)") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+
+ggplot(summary_df, aes(x = experience_level, y = count, fill = experience_level)) +
+  geom_col() +
+  labs(title = "Count of Employees by Experience Level (S & M Companies)",
+       x = "Experience Level",
+       y = "Count of Employees") +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme_minimal()
+```
+
+
+
+
+```{R}
+df_country <- df_selected %>%
+  mutate(remote_status = ifelse(company_location == employee_residence, "Non Remote", "Remote")) %>%
+  group_by(company_location, remote_status) %>%
+  summarise(
+    avg_salary = mean(salary_in_usd, na.rm = TRUE),
+    count = n(),
+    .groups = "drop"
+  )
+
+df_country_filtered <- df_country %>%
+  group_by(company_location) %>%
+  filter(sum(count) >= 2) %>%
+  ungroup()
+
+df_wide <- df_country_filtered %>%
+  select(company_location, remote_status, avg_salary) %>%
+  pivot_wider(
+    names_from = remote_status,
+    values_from = avg_salary
+  )
+
+df_wide <- df_wide %>%
+  filter(!is.na(Remote), !is.na(`Non Remote`), `Non Remote` != 0) %>%
+  mutate(
+    pct_difference = round(((Remote - `Non Remote`) / `Non Remote`) * 100, 1)
+  )
+
+df_plot <- df_country_filtered %>%
+  left_join(
+    df_wide %>% select(company_location, pct_difference),
+    by = "company_location",
+    relationship = "many-to-many"
+  )
+
+ggplot(df_plot, aes(x = company_location, y = avg_salary, fill = remote_status)) +
+  geom_col(position = position_dodge(width = 0.8)) +
+  geom_text(
+    data = distinct(df_plot, company_location, pct_difference),
+    aes(
+      x = company_location,
+      y = max(df_plot$avg_salary, na.rm = TRUE) * 1.05,
+      label = paste0(pct_difference, "%")
+    ),
+    inherit.aes = FALSE,
+    vjust = -0.5,
+    size = 3,
+    angle = 45
+  ) +
+  labs(
+    title = "Salaries by Country",
+    x = "Country",
+    y = "Average Salary (USD)",
+    fill = "Remote Status"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+### over 54% US jobs remote, also all squing from other countries will only be down trending
+
+
+
